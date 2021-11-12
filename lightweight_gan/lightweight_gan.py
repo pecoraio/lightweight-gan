@@ -26,15 +26,20 @@ from kornia import filter2d
 
 from lightweight_gan.diff_augment import DiffAugment
 from lightweight_gan.version import __version__
+# from diff_augment import DiffAugment
+# from version import __version__
 
 from tqdm import tqdm
 from einops import rearrange, reduce, repeat
 
 from adabelief_pytorch import AdaBelief
 
-# asserts
+global cpu
 
-assert torch.cuda.is_available(), 'You need to have an Nvidia GPU with CUDA installed.'
+cpu =True
+# asserts
+if cpu == False:
+    assert torch.cuda.is_available(), 'You need to have an Nvidia GPU with CUDA installed.'
 
 # constants
 
@@ -816,7 +821,8 @@ class LightweightGAN(nn.Module):
         self.apply(self._init_weights)
         self.reset_parameter_averaging()
 
-        self.cuda(rank)
+        if cpu == False :
+            self.cuda(rank)
         self.D_aug = AugWrapper(self.D, image_size)
 
     def _init_weights(self, m):
@@ -1061,7 +1067,10 @@ class Trainer():
 
     def train(self):
         assert exists(self.loader), 'You must first initialize the data source with `.set_data_src(<folder of images>)`'
-        device = torch.device(f'cuda:{self.rank}')
+        if cpu == True :
+            device = torch.device('cpu')
+        else:
+            device = torch.device(f'cuda:{self.rank}')
 
         if not exists(self.GAN):
             self.init_GAN()
@@ -1100,8 +1109,12 @@ class Trainer():
 
         self.GAN.D_opt.zero_grad()
         for i in gradient_accumulate_contexts(self.gradient_accumulate_every, self.is_ddp, ddps=[D_aug, G]):
-            latents = torch.randn(batch_size, latent_dim).cuda(self.rank)
-            image_batch = next(self.loader).cuda(self.rank)
+            if cpu == True:
+                latents = torch.randn(batch_size, latent_dim)
+                image_batch = next(self.loader)
+            else:
+                latents = torch.randn(batch_size, latent_dim).cuda(self.rank)
+                image_batch = next(self.loader).cuda(self.rank)
             image_batch.requires_grad_()
 
             with amp_context():
@@ -1169,10 +1182,16 @@ class Trainer():
         self.GAN.G_opt.zero_grad()
 
         for i in gradient_accumulate_contexts(self.gradient_accumulate_every, self.is_ddp, ddps=[G, D_aug]):
-            latents = torch.randn(batch_size, latent_dim).cuda(self.rank)
+            if cpu == True:
+                latents = torch.randn(batch_size, latent_dim)
+            else :
+                latents = torch.randn(batch_size, latent_dim).cuda(self.rank)
 
             if G_requires_calc_real:
-                image_batch = next(self.loader).cuda(self.rank)
+                if cpu == True:
+                    image_batch = next(self.loader)
+                else :
+                    image_batch = next(self.loader).cuda(self.rank)
                 image_batch.requires_grad_()
 
             with amp_context():
@@ -1245,7 +1264,10 @@ class Trainer():
 
         # latents and noise
 
-        latents = torch.randn((num_rows ** 2, latent_dim)).cuda(self.rank)
+        if cpu == True:
+           latents = torch.randn((num_rows ** 2, latent_dim))
+        else :
+            latents = torch.randn((num_rows ** 2, latent_dim)).cuda(self.rank)
 
         # regular
 
@@ -1272,7 +1294,10 @@ class Trainer():
         # regular
         if 'default' in types:
             for i in tqdm(range(num_image_tiles), desc='Saving generated default images'):
-                latents = torch.randn((1, latent_dim)).cuda(self.rank)
+                if cpu == True:
+                    latents = torch.randn((1, latent_dim))
+                else :
+                    latents = torch.randn((1, latent_dim)).cuda(self.rank)
                 generated_image = self.generate_(self.GAN.G, latents)
                 path = str(self.results_dir / dir_name / f'{str(num)}-{str(i)}.{ext}')
                 torchvision.utils.save_image(generated_image[0], path, nrow=1)
@@ -1280,7 +1305,10 @@ class Trainer():
         # moving averages
         if 'ema' in types:
             for i in tqdm(range(num_image_tiles), desc='Saving generated EMA images'):
-                latents = torch.randn((1, latent_dim)).cuda(self.rank)
+                if cpu == True:
+                    latents = torch.randn((1, latent_dim))
+                else :
+                    latents = torch.randn((1, latent_dim)).cuda(self.rank)
                 generated_image = self.generate_(self.GAN.GE, latents)
                 path = str(self.results_dir / dir_name / f'{str(num)}-{str(i)}-ema.{ext}')
                 torchvision.utils.save_image(generated_image[0], path, nrow=1)
@@ -1307,7 +1335,10 @@ class Trainer():
             self.GAN.eval()
 
             if checkpoint == 0:
-                latents = torch.randn((num_images, self.GAN.latent_dim)).cuda(self.rank)
+                if cpu == True:
+                    latents = torch.randn((num_images, self.GAN.latent_dim))
+                else :
+                    latents = torch.randn((num_images, self.GAN.latent_dim)).cuda(self.rank)
 
             # regular
             if 'default' in types:
@@ -1324,7 +1355,8 @@ class Trainer():
     @torch.no_grad()
     def calculate_fid(self, num_batches):
         from pytorch_fid import fid_score
-        torch.cuda.empty_cache()
+        if cpu == False:
+            torch.cuda.empty_cache()
 
         real_path = self.fid_dir / 'real'
         fake_path = self.fid_dir / 'fake'
@@ -1353,7 +1385,10 @@ class Trainer():
 
         for batch_num in tqdm(range(num_batches), desc='calculating FID - saving generated'):
             # latents and noise
-            latents = torch.randn(self.batch_size, latent_dim).cuda(self.rank)
+            if cpu == True:
+                latents = torch.randn(self.batch_size, latent_dim)
+            else :
+                latents = torch.randn(self.batch_size, latent_dim).cuda(self.rank)
 
             # moving averages
             generated_images = self.generate_(self.GAN.GE, latents)
@@ -1380,8 +1415,12 @@ class Trainer():
 
         # latents and noise
 
-        latents_low = torch.randn(num_rows ** 2, latent_dim).cuda(self.rank)
-        latents_high = torch.randn(num_rows ** 2, latent_dim).cuda(self.rank)
+        if cpu == True:
+            latents_low = torch.randn(num_rows ** 2, latent_dim)
+            latents_high = torch.randn(num_rows ** 2, latent_dim)
+        else :
+            latents_low = torch.randn(num_rows ** 2, latent_dim).cuda(self.rank)
+            latents_high = torch.randn(num_rows ** 2, latent_dim).cuda(self.rank)
 
         ratios = torch.linspace(0., 8., num_steps)
 

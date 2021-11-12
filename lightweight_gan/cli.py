@@ -116,6 +116,7 @@ def train_from_folder(
     seed = 42,
     amp = False,
     show_progress = False,
+    cpu = False,
 ):
     num_image_tiles = default(num_image_tiles, 4 if image_size > 512 else 8)
 
@@ -148,6 +149,8 @@ def train_from_folder(
         clear_fid_cache = clear_fid_cache,
         amp = amp
     )
+    # if lcpu :
+    # cpu = True
 
     if generate:
         model = Trainer(**model_args)
@@ -188,3 +191,5 @@ def train_from_folder(
 
 def main():
     fire.Fire(train_from_folder)
+
+#train_from_folder(generate=True)
