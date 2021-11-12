@@ -8,9 +8,9 @@
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "python": "C:\\ProgramData\\Anaconda3\\python.exe",
+            "python": "python",
             "console": "integratedTerminal",
-            "module": "lightweight_gan.cli",
+            "program": "${file}",
             "args": [
                 "--generate",
                 "--name",

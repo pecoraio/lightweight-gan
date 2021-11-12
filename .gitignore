@@ -127,3 +127,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+results/face-generated-0/generated-11-12-2021_12-54-49-0-ema.jpg
+results

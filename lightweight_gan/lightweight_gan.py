@@ -10,6 +10,7 @@ from pathlib import Path
 from shutil import rmtree
 
 import torch
+from torch._C import device
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim import Adam
 from torch import nn, einsum
@@ -34,12 +35,12 @@ from einops import rearrange, reduce, repeat
 
 from adabelief_pytorch import AdaBelief
 
-global cpu
+# global cpu
 
-cpu =True
+# cpu =True
 # asserts
-if cpu == False:
-    assert torch.cuda.is_available(), 'You need to have an Nvidia GPU with CUDA installed.'
+# if cpu == False:
+#     assert torch.cuda.is_available(), 'You need to have an Nvidia GPU with CUDA installed.'
 
 # constants
 
@@ -455,7 +456,8 @@ class Generator(nn.Module):
         transparent = False,
         greyscale = False,
         attn_res_layers = [],
-        freq_chan_attn = False
+        freq_chan_attn = False,
+        #cpu = False,
     ):
         super().__init__()
         resolution = log2(image_size)
@@ -775,7 +777,8 @@ class LightweightGAN(nn.Module):
         ttur_mult = 1.,
         lr = 2e-4,
         rank = 0,
-        ddp = False
+        ddp = False,
+        cpu = False,
     ):
         super().__init__()
         self.latent_dim = latent_dim
@@ -821,7 +824,7 @@ class LightweightGAN(nn.Module):
         self.apply(self._init_weights)
         self.reset_parameter_averaging()
 
-        if cpu == False :
+        if self.cpu == False :
             self.cuda(rank)
         self.D_aug = AugWrapper(self.D, image_size)
 
@@ -888,8 +891,9 @@ class Trainer():
         world_size = 1,
         log = False,
         amp = False,
+        cpu = False,
         *args,
-        **kwargs
+        **kwargs,
     ):
         self.GAN_params = [args, kwargs]
         self.GAN = None
@@ -968,6 +972,7 @@ class Trainer():
         self.amp = amp
         self.G_scaler = GradScaler(enabled = self.amp)
         self.D_scaler = GradScaler(enabled = self.amp)
+        self.cpu = cpu
 
     @property
     def image_extension(self):
@@ -1012,6 +1017,7 @@ class Trainer():
             transparent = self.transparent,
             greyscale = self.greyscale,
             rank = self.rank,
+            cpu = self.cpu,
             *args,
             **kwargs
         )
@@ -1067,7 +1073,7 @@ class Trainer():
 
     def train(self):
         assert exists(self.loader), 'You must first initialize the data source with `.set_data_src(<folder of images>)`'
-        if cpu == True :
+        if self.cpu == True :
             device = torch.device('cpu')
         else:
             device = torch.device(f'cuda:{self.rank}')
@@ -1109,7 +1115,7 @@ class Trainer():
 
         self.GAN.D_opt.zero_grad()
         for i in gradient_accumulate_contexts(self.gradient_accumulate_every, self.is_ddp, ddps=[D_aug, G]):
-            if cpu == True:
+            if self.cpu == True:
                 latents = torch.randn(batch_size, latent_dim)
                 image_batch = next(self.loader)
             else:
@@ -1182,13 +1188,13 @@ class Trainer():
         self.GAN.G_opt.zero_grad()
 
         for i in gradient_accumulate_contexts(self.gradient_accumulate_every, self.is_ddp, ddps=[G, D_aug]):
-            if cpu == True:
+            if self.cpu == True:
                 latents = torch.randn(batch_size, latent_dim)
             else :
                 latents = torch.randn(batch_size, latent_dim).cuda(self.rank)
 
             if G_requires_calc_real:
-                if cpu == True:
+                if self.cpu == True:
                     image_batch = next(self.loader)
                 else :
                     image_batch = next(self.loader).cuda(self.rank)
@@ -1264,7 +1270,7 @@ class Trainer():
 
         # latents and noise
 
-        if cpu == True:
+        if self.cpu == True:
            latents = torch.randn((num_rows ** 2, latent_dim))
         else :
             latents = torch.randn((num_rows ** 2, latent_dim)).cuda(self.rank)
@@ -1294,7 +1300,7 @@ class Trainer():
         # regular
         if 'default' in types:
             for i in tqdm(range(num_image_tiles), desc='Saving generated default images'):
-                if cpu == True:
+                if self.cpu == True:
                     latents = torch.randn((1, latent_dim))
                 else :
                     latents = torch.randn((1, latent_dim)).cuda(self.rank)
@@ -1305,7 +1311,7 @@ class Trainer():
         # moving averages
         if 'ema' in types:
             for i in tqdm(range(num_image_tiles), desc='Saving generated EMA images'):
-                if cpu == True:
+                if self.cpu == True:
                     latents = torch.randn((1, latent_dim))
                 else :
                     latents = torch.randn((1, latent_dim)).cuda(self.rank)
@@ -1335,7 +1341,7 @@ class Trainer():
             self.GAN.eval()
 
             if checkpoint == 0:
-                if cpu == True:
+                if self.cpu == True:
                     latents = torch.randn((num_images, self.GAN.latent_dim))
                 else :
                     latents = torch.randn((num_images, self.GAN.latent_dim)).cuda(self.rank)
@@ -1355,7 +1361,7 @@ class Trainer():
     @torch.no_grad()
     def calculate_fid(self, num_batches):
         from pytorch_fid import fid_score
-        if cpu == False:
+        if self.cpu == False:
             torch.cuda.empty_cache()
 
         real_path = self.fid_dir / 'real'
@@ -1385,7 +1391,7 @@ class Trainer():
 
         for batch_num in tqdm(range(num_batches), desc='calculating FID - saving generated'):
             # latents and noise
-            if cpu == True:
+            if self.cpu == True:
                 latents = torch.randn(self.batch_size, latent_dim)
             else :
                 latents = torch.randn(self.batch_size, latent_dim).cuda(self.rank)
@@ -1415,7 +1421,7 @@ class Trainer():
 
         # latents and noise
 
-        if cpu == True:
+        if self.cpu == True:
             latents_low = torch.randn(num_rows ** 2, latent_dim)
             latents_high = torch.randn(num_rows ** 2, latent_dim)
         else :
@@ -1498,7 +1504,10 @@ class Trainer():
 
         self.steps = name * self.save_every
 
-        load_data = torch.load(self.model_name(name))
+        if self.cpu == True:
+            load_data = torch.load(self.model_name(name),map_location=lambda storage, loc: storage)
+        else :
+            load_data = torch.load(self.model_name(name))
 
         if print_version and 'version' in load_data and self.is_main:
             print(f"loading from version {load_data['version']}")
